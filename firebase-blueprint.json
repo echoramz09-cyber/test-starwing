@@ -1,0 +1,108 @@
+{
+  "entities": {
+    "SiteConfig": {
+      "title": "Site Configuration",
+      "description": "Global settings for the website's hero section.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hero_title_top": { "type": "string" },
+        "hero_title_bottom": { "type": "string" },
+        "hero_description": { "type": "string" },
+        "hero_image": { "type": "string" }
+      },
+      "required": ["id", "hero_title_top", "hero_title_bottom", "hero_description", "hero_image"]
+    },
+    "TeamStats": {
+      "title": "Team Statistics",
+      "description": "Key performance metrics for the eSports team.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "value": { "type": "string" },
+        "icon": { "type": "string" }
+      },
+      "required": ["id", "label", "value", "icon"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A member of the eSports team roster.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "img": { "type": "string" },
+        "twitter": { "type": "string" },
+        "twitch": { "type": "string" },
+        "instagram": { "type": "string" }
+      },
+      "required": ["id", "name", "role", "img"]
+    },
+    "Achievement": {
+      "title": "Achievement",
+      "description": "A tournament win or notable placement.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "year": { "type": "string" },
+        "title": { "type": "string" },
+        "rank": { "type": "string" },
+        "prize": { "type": "string" }
+      },
+      "required": ["id", "year", "title", "rank", "prize"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "An upcoming or live eSports match.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "opponent": { "type": "string" },
+        "game": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "is_live": { "type": "boolean" }
+      },
+      "required": ["id", "opponent", "game", "date", "time", "is_live"]
+    },
+    "User": {
+      "title": "User",
+      "description": "A user of the application with role-based access control.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/site_config/{configId}": {
+      "schema": "SiteConfig",
+      "description": "Stores the hero section configuration."
+    },
+    "/team_stats/{statId}": {
+      "schema": "TeamStats",
+      "description": "Stores the team's key statistics."
+    },
+    "/roster/{playerId}": {
+      "schema": "Player",
+      "description": "Stores the team's player roster."
+    },
+    "/achievements/{achievementId}": {
+      "schema": "Achievement",
+      "description": "Stores the team's tournament achievements."
+    },
+    "/matches/{matchId}": {
+      "schema": "Match",
+      "description": "Stores upcoming and live matches."
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user profiles and roles."
+    }
+  }
+}

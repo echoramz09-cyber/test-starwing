@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: site_config
+    // Document ID: configId
+    // Fields:
+    //   - id: string (required)
+    //   - hero_title_top: string (required)
+    //   - hero_title_bottom: string (required)
+    //   - hero_description: string (required)
+    //   - hero_image: string (required)
+    //
+    // Collection: team_stats
+    // Document ID: statId
+    // Fields:
+    //   - id: string (required)
+    //   - label: string (required)
+    //   - value: string (required)
+    //   - icon: string (required)
+    //
+    // Collection: roster
+    // Document ID: playerId
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - role: string (required)
+    //   - img: string (required)
+    //   - twitter: string (optional)
+    //   - twitch: string (optional)
+    //   - instagram: string (optional)
+    //
+    // Collection: achievements
+    // Document ID: achievementId
+    // Fields:
+    //   - id: string (required)
+    //   - year: string (required)
+    //   - title: string (required)
+    //   - rank: string (required)
+    //   - prize: string (required)
+    //
+    // Collection: matches
+    // Document ID: matchId
+    // Fields:
+    //   - id: string (required)
+    //   - opponent: string (required)
+    //   - game: string (required)
+    //   - date: string (required)
+    //   - time: string (required)
+    //   - is_live: boolean (required)
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "richspoiz09@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidSiteConfig() {
+      return hasRequiredFields(['id', 'hero_title_top', 'hero_title_bottom', 'hero_description', 'hero_image']) &&
+        hasOnlyAllowedFields(['id', 'hero_title_top', 'hero_title_bottom', 'hero_description', 'hero_image']) &&
+        isValidString('hero_title_top', 1, 100) &&
+        isValidString('hero_title_bottom', 1, 100) &&
+        isValidString('hero_description', 1, 1000) &&
+        isValidString('hero_image', 1, 1000);
+    }
+
+    function isValidTeamStat() {
+      return hasRequiredFields(['id', 'label', 'value', 'icon']) &&
+        hasOnlyAllowedFields(['id', 'label', 'value', 'icon']) &&
+        isValidString('label', 1, 50) &&
+        isValidString('value', 1, 20) &&
+        isValidString('icon', 1, 50);
+    }
+
+    function isValidPlayer() {
+      return hasRequiredFields(['id', 'name', 'role', 'img']) &&
+        hasOnlyAllowedFields(['id', 'name', 'role', 'img', 'twitter', 'twitch', 'instagram']) &&
+        isValidString('name', 1, 50) &&
+        isValidString('role', 1, 50) &&
+        isValidString('img', 1, 1000);
+    }
+
+    function isValidAchievement() {
+      return hasRequiredFields(['id', 'year', 'title', 'rank', 'prize']) &&
+        hasOnlyAllowedFields(['id', 'year', 'title', 'rank', 'prize']) &&
+        isValidString('year', 4, 4) &&
+        isValidString('title', 1, 100) &&
+        isValidString('rank', 1, 50) &&
+        isValidString('prize', 1, 50);
+    }
+
+    function isValidMatch() {
+      return hasRequiredFields(['id', 'opponent', 'game', 'date', 'time', 'is_live']) &&
+        hasOnlyAllowedFields(['id', 'opponent', 'game', 'date', 'time', 'is_live']) &&
+        isValidString('opponent', 1, 100) &&
+        isValidString('game', 1, 100) &&
+        isValidString('date', 1, 50) &&
+        isValidString('time', 1, 50) &&
+        request.resource.data.is_live is bool;
+    }
+
+    function isValidUser() {
+      return hasRequiredFields(['uid', 'email', 'role']) &&
+        hasOnlyAllowedFields(['uid', 'email', 'role']) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.role in ['admin', 'user'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /site_config/{configId} {
+      allow read: if true; // Publicly readable for the portfolio
+      allow write: if isAdmin() && isValidSiteConfig();
+    }
+
+    match /team_stats/{statId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidTeamStat();
+    }
+
+    match /roster/{playerId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidPlayer();
+    }
+
+    match /achievements/{achievementId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidAchievement();
+    }
+
+    match /matches/{matchId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidMatch();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser() && request.resource.data.role == 'user';
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUser() && (isAdmin() || request.resource.data.role == resource.data.role);
+    }
+  }
+}

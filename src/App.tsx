@@ -20,11 +20,143 @@ import {
   Settings,
   Plus,
   Trash2,
-  X
+  X,
+  LogIn,
+  LogOut
 } from "lucide-react";
-import { useRef, useState, useEffect } from "react";
-import { getSupabase } from "./lib/supabase";
+import React, { useRef, useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
+import { db, auth } from "./firebase";
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  addDoc,
+  query,
+  orderBy,
+  getDoc,
+  getDocFromServer
+} from "firebase/firestore";
+import { 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  onAuthStateChanged, 
+  signOut,
+  User as FirebaseUser
+} from "firebase/auth";
 import { SiteConfig, TeamStats, Player, Achievement, Match } from "./types";
+
+// Error Handling Spec for Firestore Operations
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+// Error Boundary Component
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    const { hasError, error } = this.state;
+    if (hasError) {
+      let errorMessage = "Something went wrong.";
+      try {
+        const parsed = JSON.parse(error?.message || "{}");
+        if (parsed.error) {
+          errorMessage = `Database Error: ${parsed.error} (${parsed.operationType} on ${parsed.path})`;
+        }
+      } catch (e) {
+        errorMessage = error?.message || errorMessage;
+      }
+
+      return (
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
+          <div className="max-w-md w-full bg-slate-900 border border-red-500/50 rounded-2xl p-8 shadow-2xl">
+            <X className="w-16 h-16 text-red-500 mx-auto mb-6" />
+            <h1 className="text-2xl font-bold text-white mb-4">Application Error</h1>
+            <p className="text-slate-400 mb-8">{errorMessage}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-amber-500 hover:bg-amber-400 text-black font-bold py-3 rounded-xl transition-colors"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 const GOLDEN = "#FFD700";
 const DEEP_BLUE = "#0A192F";
@@ -66,7 +198,17 @@ const iconMap: Record<string, any> = {
 };
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <StarwingApp />
+    </ErrorBoundary>
+  );
+}
+
+function StarwingApp() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   
   const [config, setConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
   const [stats, setStats] = useState<TeamStats[]>(DEFAULT_STATS);
@@ -76,135 +218,264 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const supabase = getSupabase();
 
+  // Validate Connection to Firestore
   useEffect(() => {
-    if (supabase) {
-      fetchData();
-      
-      // Set up real-time subscriptions
-      const configSub = supabase.channel('site_config').on('postgres_changes', { event: '*', schema: 'public', table: 'site_config' }, fetchData).subscribe();
-      const statsSub = supabase.channel('team_stats').on('postgres_changes', { event: '*', schema: 'public', table: 'team_stats' }, fetchData).subscribe();
-      const rosterSub = supabase.channel('roster').on('postgres_changes', { event: '*', schema: 'public', table: 'roster' }, fetchData).subscribe();
-      const achievementsSub = supabase.channel('achievements').on('postgres_changes', { event: '*', schema: 'public', table: 'achievements' }, fetchData).subscribe();
-      const matchesSub = supabase.channel('matches').on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, fetchData).subscribe();
-
-      return () => {
-        supabase.removeChannel(configSub);
-        supabase.removeChannel(statsSub);
-        supabase.removeChannel(rosterSub);
-        supabase.removeChannel(achievementsSub);
-        supabase.removeChannel(matchesSub);
-      };
-    } else {
-      setLoading(false);
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
     }
+    testConnection();
   }, []);
 
-  const fetchData = async () => {
-    if (!supabase) return;
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      setIsAuthReady(true);
+      
+      if (firebaseUser) {
+        // Check if user is admin
+        const isAdminEmail = firebaseUser.email === "richspoiz09@gmail.com";
+        if (isAdminEmail) {
+          setIsAdmin(true);
+        } else {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+            if (userDoc.exists() && userDoc.data().role === 'admin') {
+              setIsAdmin(true);
+            } else {
+              setIsAdmin(false);
+            }
+          } catch (e) {
+            setIsAdmin(false);
+          }
+        }
+      } else {
+        setIsAdmin(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    const unsubConfig = onSnapshot(collection(db, 'site_config'), (snapshot) => {
+      if (!snapshot.empty) {
+        setConfig(snapshot.docs[0].data() as SiteConfig);
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'site_config'));
+
+    const unsubStats = onSnapshot(query(collection(db, 'team_stats'), orderBy('id')), (snapshot) => {
+      if (!snapshot.empty) {
+        setStats(snapshot.docs.map(doc => doc.data() as TeamStats));
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'team_stats'));
+
+    const unsubRoster = onSnapshot(query(collection(db, 'roster'), orderBy('id')), (snapshot) => {
+      if (!snapshot.empty) {
+        setRoster(snapshot.docs.map(doc => doc.data() as Player));
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'roster'));
+
+    const unsubAchievements = onSnapshot(query(collection(db, 'achievements'), orderBy('year', 'desc')), (snapshot) => {
+      if (!snapshot.empty) {
+        setAchievements(snapshot.docs.map(doc => doc.data() as Achievement));
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'achievements'));
+
+    const unsubMatches = onSnapshot(query(collection(db, 'matches'), orderBy('date')), (snapshot) => {
+      if (!snapshot.empty) {
+        setMatches(snapshot.docs.map(doc => doc.data() as Match));
+      }
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'matches'));
+
+    setLoading(false);
+
+    return () => {
+      unsubConfig();
+      unsubStats();
+      unsubRoster();
+      unsubAchievements();
+      unsubMatches();
+    };
+  }, [isAuthReady]);
+
+  const login = async () => {
+    const provider = new GoogleAuthProvider();
     try {
-      const { data: configData } = await supabase.from('site_config').select('*').single();
-      if (configData) setConfig(configData);
-
-      const { data: statsData } = await supabase.from('team_stats').select('*').order('id');
-      if (statsData) setStats(statsData);
-
-      const { data: rosterData } = await supabase.from('roster').select('*').order('id');
-      if (rosterData) setRoster(rosterData);
-
-      const { data: achievementsData } = await supabase.from('achievements').select('*').order('year', { ascending: false });
-      if (achievementsData) setAchievements(achievementsData);
-
-      const { data: matchesData } = await supabase.from('matches').select('*').order('date');
-      if (matchesData) setMatches(matchesData);
+      await signInWithPopup(auth, provider);
     } catch (error) {
-      console.error("Error fetching data from Supabase:", error);
-    } finally {
-      setLoading(false);
+      console.error("Login failed:", error);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Logout failed:", error);
     }
   };
 
   const updateConfig = async (newConfig: Partial<SiteConfig>) => {
     const updated = { ...config, ...newConfig };
     setConfig(updated);
-    if (supabase) await supabase.from('site_config').upsert(updated);
+    if (isAdmin) {
+      try {
+        await setDoc(doc(db, 'site_config', config.id || '1'), updated);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `site_config/${config.id}`);
+      }
+    }
   };
 
   const updateStat = async (id: string, updates: Partial<TeamStats>) => {
     const updated = stats.map(s => s.id === id ? { ...s, ...updates } : s);
     setStats(updated);
-    if (supabase) await supabase.from('team_stats').update(updates).eq('id', id);
+    if (isAdmin) {
+      try {
+        await updateDoc(doc(db, 'team_stats', id), updates);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `team_stats/${id}`);
+      }
+    }
   };
 
   const addPlayer = async () => {
-    const newPlayer = { name: "New Player", role: "Role", img: "https://picsum.photos/seed/new/400/500" };
-    if (supabase) {
-      const { data } = await supabase.from('roster').insert(newPlayer).select().single();
-      if (data) setRoster([...roster, data]);
+    if (!isAdmin) return;
+    const newId = Math.random().toString(36).substr(2, 9);
+    const newPlayer = { id: newId, name: "New Player", role: "Role", img: "https://picsum.photos/seed/new/400/500" };
+    try {
+      await setDoc(doc(db, 'roster', newId), newPlayer);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'roster');
     }
   };
 
   const deletePlayer = async (id: string) => {
+    if (!isAdmin) return;
     setRoster(roster.filter(p => p.id !== id));
-    if (supabase) await supabase.from('roster').delete().eq('id', id);
+    try {
+      await deleteDoc(doc(db, 'roster', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `roster/${id}`);
+    }
   };
 
   const updatePlayer = async (id: string, updates: Partial<Player>) => {
     const updated = roster.map(p => p.id === id ? { ...p, ...updates } : p);
     setRoster(updated);
-    if (supabase) await supabase.from('roster').update(updates).eq('id', id);
+    if (isAdmin) {
+      try {
+        await updateDoc(doc(db, 'roster', id), updates);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `roster/${id}`);
+      }
+    }
   };
 
   const addAchievement = async () => {
-    const newAch = { year: "2026", title: "New Achievement", rank: "1st", prize: "$0" };
-    if (supabase) {
-      const { data } = await supabase.from('achievements').insert(newAch).select().single();
-      if (data) setAchievements([...achievements, data]);
+    if (!isAdmin) return;
+    const newId = Math.random().toString(36).substr(2, 9);
+    const newAch = { id: newId, year: "2026", title: "New Achievement", rank: "1st", prize: "$0" };
+    try {
+      await setDoc(doc(db, 'achievements', newId), newAch);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'achievements');
     }
   };
 
   const updateAchievement = async (id: string, updates: Partial<Achievement>) => {
     const updated = achievements.map(a => a.id === id ? { ...a, ...updates } : a);
     setAchievements(updated);
-    if (supabase) await supabase.from('achievements').update(updates).eq('id', id);
+    if (isAdmin) {
+      try {
+        await updateDoc(doc(db, 'achievements', id), updates);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `achievements/${id}`);
+      }
+    }
   };
 
   const deleteAchievement = async (id: string) => {
+    if (!isAdmin) return;
     setAchievements(achievements.filter(a => a.id !== id));
-    if (supabase) await supabase.from('achievements').delete().eq('id', id);
+    try {
+      await deleteDoc(doc(db, 'achievements', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `achievements/${id}`);
+    }
   };
 
   const addMatch = async () => {
-    const newMatch = { opponent: "Opponent", game: "Game", date: "2026-12-31", time: "00:00", is_live: false };
-    if (supabase) {
-      const { data } = await supabase.from('matches').insert(newMatch).select().single();
-      if (data) setMatches([...matches, data]);
+    if (!isAdmin) return;
+    const newId = Math.random().toString(36).substr(2, 9);
+    const newMatch = { id: newId, opponent: "Opponent", game: "Game", date: "2026-12-31", time: "00:00", is_live: false };
+    try {
+      await setDoc(doc(db, 'matches', newId), newMatch);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'matches');
     }
   };
 
   const updateMatch = async (id: string, updates: Partial<Match>) => {
     const updated = matches.map(m => m.id === id ? { ...m, ...updates } : m);
     setMatches(updated);
-    if (supabase) await supabase.from('matches').update(updates).eq('id', id);
+    if (isAdmin) {
+      try {
+        await updateDoc(doc(db, 'matches', id), updates);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `matches/${id}`);
+      }
+    }
   };
 
   const deleteMatch = async (id: string) => {
+    if (!isAdmin) return;
     setMatches(matches.filter(m => m.id !== id));
-    if (supabase) await supabase.from('matches').delete().eq('id', id);
+    try {
+      await deleteDoc(doc(db, 'matches', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `matches/${id}`);
+    }
   };
 
   return (
     <div ref={containerRef} className="min-h-screen bg-[#020617] text-white font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden">
       {/* Admin Toggle */}
       <div className="fixed bottom-8 right-8 z-[100] flex flex-col gap-4">
-        <button 
-          onClick={() => setIsAdmin(!isAdmin)}
-          className="w-14 h-14 bg-amber-500 rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform group"
-          title="Admin Panel"
-        >
-          {isAdmin ? <X className="text-black" /> : <Settings className="text-black group-hover:rotate-90 transition-transform" />}
-        </button>
+        {user ? (
+          <button 
+            onClick={logout}
+            className="w-14 h-14 bg-slate-800 rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform group"
+            title="Logout"
+          >
+            <LogOut className="text-white" />
+          </button>
+        ) : (
+          <button 
+            onClick={login}
+            className="w-14 h-14 bg-amber-500 rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform group"
+            title="Login as Admin"
+          >
+            <LogIn className="text-black" />
+          </button>
+        )}
+        {isAdmin && (
+          <button 
+            onClick={() => setIsAdmin(!isAdmin)}
+            className="w-14 h-14 bg-amber-500 rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform group"
+            title="Admin Panel"
+          >
+            {isAdmin ? <X className="text-black" /> : <Settings className="text-black group-hover:rotate-90 transition-transform" />}
+          </button>
+        )}
       </div>
 
       {/* Admin Panel Overlay */}
