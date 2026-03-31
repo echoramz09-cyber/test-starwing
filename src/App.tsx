@@ -40,8 +40,8 @@ import {
   getDocFromServer
 } from "firebase/firestore";
 import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   onAuthStateChanged, 
   signOut,
   User as FirebaseUser
@@ -209,6 +209,9 @@ function StarwingApp() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [loginError, setLoginError] = useState("");
   
   const [config, setConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
   const [stats, setStats] = useState<TeamStats[]>(DEFAULT_STATS);
@@ -240,7 +243,7 @@ function StarwingApp() {
       
       if (firebaseUser) {
         // Check if user is admin
-        const isAdminEmail = firebaseUser.email === "richspoiz09@gmail.com";
+        const isAdminEmail = firebaseUser.email === "asxramzonfire09@starwing.com";
         if (isAdminEmail) {
           setIsAdmin(true);
         } else {
@@ -306,12 +309,53 @@ function StarwingApp() {
     };
   }, [isAuthReady]);
 
-  const login = async () => {
-    const provider = new GoogleAuthProvider();
+  const login = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError("");
+    
+    const username = loginForm.username.trim();
+    const password = loginForm.password;
+    const email = `${username}@starwing.com`;
+    
+    // Check if these are the master admin credentials
+    const isMasterAdmin = username === "asxramzonfire09" && password === "rehanabegum123";
+    
     try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed:", error);
+      // Try to sign in
+      await signInWithEmailAndPassword(auth, email, password);
+      setShowLoginModal(false);
+      setLoginForm({ username: "", password: "" });
+    } catch (error: any) {
+      console.error("Login attempt failed:", error.code);
+      
+      // If user doesn't exist and it's the master admin, create the account silently
+      if ((error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') && isMasterAdmin) {
+        try {
+          const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+          // Set the admin role in Firestore
+          await setDoc(doc(db, 'users', userCredential.user.uid), {
+            uid: userCredential.user.uid,
+            email: email,
+            role: 'admin'
+          });
+          setShowLoginModal(false);
+          setLoginForm({ username: "", password: "" });
+          return;
+        } catch (createError: any) {
+          if (createError.code === 'auth/operation-not-allowed') {
+            setLoginError("Please enable 'Email/Password' in your Firebase Console (Authentication > Sign-in method).");
+          } else {
+            setLoginError("System error during first-time setup. Please try again.");
+          }
+          return;
+        }
+      }
+
+      if (error.code === 'auth/operation-not-allowed') {
+        setLoginError("Please enable 'Email/Password' in your Firebase Console (Authentication > Sign-in method).");
+      } else {
+        setLoginError("Invalid username or password. Please try again.");
+      }
     }
   };
 
@@ -460,7 +504,7 @@ function StarwingApp() {
           </button>
         ) : (
           <button 
-            onClick={login}
+            onClick={() => setShowLoginModal(true)}
             className="w-14 h-14 bg-amber-500 rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform group"
             title="Login as Admin"
           >
@@ -477,6 +521,76 @@ function StarwingApp() {
           </button>
         )}
       </div>
+
+      {/* Login Modal */}
+      <AnimatePresence>
+        {showLoginModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-8 shadow-2xl relative"
+            >
+              <button 
+                onClick={() => setShowLoginModal(false)}
+                className="absolute top-6 right-6 text-slate-400 hover:text-white"
+              >
+                <X />
+              </button>
+              
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-amber-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-[0_0_20px_rgba(245,158,11,0.4)]">
+                  <Sword className="text-black w-8 h-8" />
+                </div>
+                <h2 className="text-2xl font-black uppercase italic">Admin <span className="text-amber-500">Access</span></h2>
+                <p className="text-slate-400 text-sm mt-2">Enter your credentials to manage the empire.</p>
+              </div>
+
+              <form onSubmit={login} className="space-y-6">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2">Username</label>
+                  <input 
+                    type="text"
+                    required
+                    value={loginForm.username}
+                    onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 transition-colors"
+                    placeholder="Enter username"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-widest text-slate-500 mb-2">Password</label>
+                  <input 
+                    type="password"
+                    required
+                    value={loginForm.password}
+                    onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-500 transition-colors"
+                    placeholder="Enter password"
+                  />
+                </div>
+                
+                {loginError && (
+                  <p className="text-red-500 text-xs font-bold text-center">{loginError}</p>
+                )}
+
+                <button 
+                  type="submit"
+                  className="w-full bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-widest py-4 rounded-xl transition-all active:scale-95 shadow-[0_0_20px_rgba(245,158,11,0.3)]"
+                >
+                  Authorize
+                </button>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Admin Panel Overlay */}
       <AnimatePresence>
