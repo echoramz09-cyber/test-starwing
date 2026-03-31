@@ -22,7 +22,8 @@ import {
   Trash2,
   X,
   LogIn,
-  LogOut
+  LogOut,
+  Rocket
 } from "lucide-react";
 import React, { useRef, useState, useEffect, Component, ErrorInfo, ReactNode } from "react";
 import { db, auth } from "./firebase";
@@ -266,39 +267,80 @@ function StarwingApp() {
   }, []);
 
   useEffect(() => {
-    if (!isAuthReady) return;
+    let configLoaded = false;
+    let statsLoaded = false;
+    let rosterLoaded = false;
+    let achievementsLoaded = false;
+    let matchesLoaded = false;
+
+    const checkLoaded = () => {
+      if (configLoaded && statsLoaded && rosterLoaded && achievementsLoaded && matchesLoaded) {
+        setLoading(false);
+      }
+    };
 
     const unsubConfig = onSnapshot(collection(db, 'site_config'), (snapshot) => {
       if (!snapshot.empty) {
         setConfig(snapshot.docs[0].data() as SiteConfig);
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'site_config'));
+      configLoaded = true;
+      checkLoaded();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'site_config');
+      configLoaded = true;
+      checkLoaded();
+    });
 
     const unsubStats = onSnapshot(query(collection(db, 'team_stats'), orderBy('id')), (snapshot) => {
       if (!snapshot.empty) {
         setStats(snapshot.docs.map(doc => doc.data() as TeamStats));
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'team_stats'));
+      statsLoaded = true;
+      checkLoaded();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'team_stats');
+      statsLoaded = true;
+      checkLoaded();
+    });
 
     const unsubRoster = onSnapshot(query(collection(db, 'roster'), orderBy('id')), (snapshot) => {
       if (!snapshot.empty) {
         setRoster(snapshot.docs.map(doc => doc.data() as Player));
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'roster'));
+      rosterLoaded = true;
+      checkLoaded();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'roster');
+      rosterLoaded = true;
+      checkLoaded();
+    });
 
     const unsubAchievements = onSnapshot(query(collection(db, 'achievements'), orderBy('year', 'desc')), (snapshot) => {
       if (!snapshot.empty) {
         setAchievements(snapshot.docs.map(doc => doc.data() as Achievement));
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'achievements'));
+      achievementsLoaded = true;
+      checkLoaded();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'achievements');
+      achievementsLoaded = true;
+      checkLoaded();
+    });
 
     const unsubMatches = onSnapshot(query(collection(db, 'matches'), orderBy('date')), (snapshot) => {
       if (!snapshot.empty) {
         setMatches(snapshot.docs.map(doc => doc.data() as Match));
       }
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'matches'));
+      matchesLoaded = true;
+      checkLoaded();
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'matches');
+      matchesLoaded = true;
+      checkLoaded();
+    });
 
-    setLoading(false);
+    // Fallback if some collections are empty or fail
+    const timeout = setTimeout(() => setLoading(false), 2000);
 
     return () => {
       unsubConfig();
@@ -306,8 +348,9 @@ function StarwingApp() {
       unsubRoster();
       unsubAchievements();
       unsubMatches();
+      clearTimeout(timeout);
     };
-  }, [isAuthReady]);
+  }, []);
 
   const login = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -492,6 +535,76 @@ function StarwingApp() {
 
   return (
     <div ref={containerRef} className="min-h-screen bg-[#020617] text-white font-sans selection:bg-amber-500/30 selection:text-amber-200 overflow-x-hidden">
+      <AnimatePresence>
+        {loading && (
+          <motion.div 
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-[#020617] z-[500] flex flex-col items-center justify-center"
+          >
+            <div className="relative mb-12">
+              <motion.div 
+                animate={{ 
+                  y: [0, -10, 0],
+                  rotate: [0, 2, -2, 0]
+                }}
+                transition={{ 
+                  duration: 1.5,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="relative z-10"
+              >
+                <Rocket className="w-16 h-16 text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)]" />
+              </motion.div>
+              
+              {/* Exhaust Flames */}
+              <motion.div 
+                animate={{ 
+                  scaleY: [1, 1.5, 1],
+                  opacity: [0.5, 0.8, 0.5]
+                }}
+                transition={{ 
+                  duration: 0.2,
+                  repeat: Infinity,
+                  ease: "linear"
+                }}
+                className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-4 h-12 bg-gradient-to-t from-transparent via-orange-500 to-amber-500 rounded-full blur-sm"
+              />
+              
+              {/* Particles */}
+              {[...Array(5)].map((_, i) => (
+                <motion.div
+                  key={i}
+                  animate={{
+                    y: [0, 40],
+                    x: [0, (i - 2) * 10],
+                    opacity: [1, 0],
+                    scale: [1, 0]
+                  }}
+                  transition={{
+                    duration: 0.8,
+                    repeat: Infinity,
+                    delay: i * 0.1,
+                    ease: "easeOut"
+                  }}
+                  className="absolute bottom-0 left-1/2 w-1 h-1 bg-amber-400 rounded-full"
+                />
+              ))}
+            </div>
+
+            <motion.h1 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-2xl font-black uppercase italic tracking-tighter"
+            >
+              STAR<span className="text-amber-500">WING</span>
+            </motion.h1>
+            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mt-4 animate-pulse">Igniting Systems...</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Admin Toggle */}
       <div className="fixed bottom-8 right-8 z-[100] flex flex-col gap-4">
         {user ? (
